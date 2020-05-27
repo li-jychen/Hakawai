@@ -550,9 +550,7 @@ typedef NS_ENUM(NSInteger, HKWMentionsCreationAction) {
     if ([self.entityChooserView respondsToSelector:@selector(setInsertionPointMarkerEnabled:)]) {
         self.entityChooserView.insertionPointMarkerEnabled = YES;
     }
-    HKWAccessoryViewMode mode = (self.chooserViewInsideTextView
-                                 ? HKWAccessoryViewModeSibling
-                                 : HKWAccessoryViewModeFreeFloating);
+    [delegate accessoryViewActivated:YES];
     [self setupChooserViewIfNeeded];
 
     // Force entityChooserView to be laid out before calculating the right cursor position.
