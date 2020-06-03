@@ -19,7 +19,7 @@
 #import "_HKWMentionsPlugin.h"
 #import "HKWMentionsAttribute.h"
 #import "HKWRoundedRectBackgroundAttributeValue.h"
-#import "_HKWMentionsCreationStateMachine.h"
+#import "HKWMentionsCreationStateMachine.h"
 #import "HKWTDummyMentionsManager.h"
 
 @interface HKWMentionsCreationStateMachine ()

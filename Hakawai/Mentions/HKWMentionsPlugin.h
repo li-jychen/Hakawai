@@ -187,30 +187,7 @@ typedef NS_ENUM(NSInteger, HKWMentionsPluginState) {
  */
 - (void)asyncRetrieveEntitiesForKeyString:(nonnull NSString *)keyString
                                searchType:(HKWMentionsSearchType)type
-                         controlCharacter:(unichar)character
-                               completion:(void(^_Null_unspecified)(NSArray *_Null_unspecified results, BOOL dedupe, BOOL isComplete))completionBlock;
-
-/*!
- Return a table view cell to be displayed for a given mention entity in the chooser view.
-
- \note If you are using the mentions plug-in in conjunction with a custom chooser view that implements the methods
- defined in the \c HKWCustomChooserViewDelegate protocol, you can just return nil. In that case the mentions plug-in
- defers responsibility for preparing the UI entirely to your custom chooser view.
- */
-- (UITableViewCell *_Null_unspecified)cellForMentionsEntity:(_Null_unspecified id<HKWMentionsEntityProtocol>)entity
-                                            withMatchString:(NSString *_Null_unspecified)matchString
-                                                  tableView:(UITableView *_Null_unspecified)tableView
-                                                atIndexPath:(NSIndexPath *_Null_unspecified)indexPath;
-
-/*!
- Return the height of the table view cell for a given mention entity in the chooser view.
-
- \note If you are using the mentions plug-in in conjunction with a custom chooser view that implements the methods
- defined in the \c HKWCustomChooserViewDelegate protocol, you can just return 0. In that case the mentions plug-in
- defers responsibility for preparing the UI entirely to your custom chooser view.
- */
-- (CGFloat)heightForCellForMentionsEntity:(id<HKWMentionsEntityProtocol> _Null_unspecified)entity
-                                tableView:(UITableView *_Null_unspecified)tableView;
+                         controlCharacter:(unichar)character;
 
 @optional
 

@@ -119,7 +119,7 @@
 		E1B3088919A2C1890096DE0E /* _HKWMentionsPlugin.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = _HKWMentionsPlugin.h; path = Mentions/_HKWMentionsPlugin.h; sourceTree = "<group>"; };
 		E1B3088A19A2C1890096DE0E /* HKWMentionsAttribute.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = HKWMentionsAttribute.h; path = Mentions/HKWMentionsAttribute.h; sourceTree = "<group>"; };
 		E1B3088B19A2C1890096DE0E /* HKWMentionsAttribute.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = HKWMentionsAttribute.m; path = Mentions/HKWMentionsAttribute.m; sourceTree = "<group>"; };
-		E1B3088C19A2C1890096DE0E /* _HKWMentionsCreationStateMachine.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = _HKWMentionsCreationStateMachine.h; path = Mentions/_HKWMentionsCreationStateMachine.h; sourceTree = "<group>"; };
+		E1B3088C19A2C1890096DE0E /* HKWMentionsCreationStateMachine.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = HKWMentionsCreationStateMachine.h; path = Mentions/HKWMentionsCreationStateMachine.h; sourceTree = "<group>"; };
 		E1B3088D19A2C1890096DE0E /* HKWMentionsCreationStateMachine.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = HKWMentionsCreationStateMachine.m; path = Mentions/HKWMentionsCreationStateMachine.m; sourceTree = "<group>"; };
 		E1B3088E19A2C1890096DE0E /* HKWMentionsEntityProtocol.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = HKWMentionsEntityProtocol.h; path = Mentions/HKWMentionsEntityProtocol.h; sourceTree = "<group>"; };
 		E1B3088F19A2C1890096DE0E /* HKWMentionsPlugin.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = HKWMentionsPlugin.h; path = Mentions/HKWMentionsPlugin.h; sourceTree = "<group>"; };
@@ -256,7 +256,7 @@
 				E1B3088B19A2C1890096DE0E /* HKWMentionsAttribute.m */,
 				E1B3089119A2C1890096DE0E /* _HKWMentionsStartDetectionStateMachine.h */,
 				E1B3089219A2C1890096DE0E /* HKWMentionsStartDetectionStateMachine.m */,
-				E1B3088C19A2C1890096DE0E /* _HKWMentionsCreationStateMachine.h */,
+				E1B3088C19A2C1890096DE0E /* HKWMentionsCreationStateMachine.h */,
 				E1B3088D19A2C1890096DE0E /* HKWMentionsCreationStateMachine.m */,
 			);
 			name = Mentions;
@@ -427,6 +427,7 @@
 			developmentRegion = English;
 			hasScannedForEncodings = 0;
 			knownRegions = (
+				English,
 				en,
 			);
 			mainGroup = E1C9675319A2A66000A4AA93;

@@ -100,7 +100,7 @@
 @interface HKWMentionsCreationStateMachine : NSObject
 
 /// The background color of the chooser view.
-@property (nonatomic, strong) UIColor *chooserViewBackgroundColor;
+//@property (nonatomic, strong) UIColor *chooserViewBackgroundColor;
 
 /// The edge insets applied to the chooser view. Only valid if the chooser view isn't using a custom frame.
 @property (nonatomic) UIEdgeInsets chooserViewEdgeInsets;

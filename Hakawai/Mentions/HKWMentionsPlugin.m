@@ -23,7 +23,7 @@
 #import "HKWMentionsAttribute.h"
 
 #import "_HKWMentionsStartDetectionStateMachine.h"
-#import "_HKWMentionsCreationStateMachine.h"
+#import "HKWMentionsCreationStateMachine.h"
 
 #import "_HKWMentionsPrivateConstants.h"
 
@@ -1861,40 +1861,12 @@ shouldChangeTextInRange:(NSRange)range
 
 - (void)asyncRetrieveEntitiesForKeyString:(NSString *)keyString
                                searchType:(HKWMentionsSearchType)type
-                         controlCharacter:(unichar)character
-                               completion:(void (^)(NSArray *, BOOL, BOOL))completionBlock {
+                         controlCharacter:(unichar)character {
     // set up the chooser view prior to data request in order to support fully customized view
     [self.creationStateMachine setupChooserViewIfNeeded];
     [self.delegate asyncRetrieveEntitiesForKeyString:keyString
                                           searchType:type
-                                    controlCharacter:character
-                                          completion:completionBlock];
-}
-
-- (UITableViewCell *)cellForMentionsEntity:(id<HKWMentionsEntityProtocol>)entity
-                           withMatchString:(NSString *)matchString
-                                 tableView:(UITableView *)tableView
-                               atIndexPath:(NSIndexPath *)indexPath {
-    return [self.delegate cellForMentionsEntity:entity withMatchString:matchString tableView:tableView atIndexPath:indexPath];
-}
-
-- (CGFloat)heightForCellForMentionsEntity:(id<HKWMentionsEntityProtocol>)entity
-                                tableView:(UITableView *)tableView {
-    return [self.delegate heightForCellForMentionsEntity:entity tableView:tableView];
-}
-
-- (UITableViewCell *)loadingCellForTableView:(UITableView *)tableView {
-    __strong __auto_type delegate = self.delegate;
-    NSAssert([delegate respondsToSelector:@selector(loadingCellForTableView:)],
-             @"The delegate does not implement the loading cell functionality. This probably means the property wasn't checked properly.");
-    return [delegate loadingCellForTableView:tableView];
-}
-
-- (CGFloat)heightForLoadingCellInTableView:(UITableView *)tableView {
-    __strong __auto_type delegate = self.delegate;
-    NSAssert([delegate respondsToSelector:@selector(heightForLoadingCellInTableView:)],
-             @"The delegate does not implement the loading cell functionality. This probably means the property wasn't checked properly.");
-    return [delegate heightForLoadingCellInTableView:tableView];
+                                    controlCharacter:character];
 }
 
 /*!
@@ -2291,14 +2263,6 @@ shouldChangeTextInRange:(NSRange)range
 }
 
 // Pass-through properties
-
-- (UIColor *)chooserViewBackgroundColor {
-    return self.creationStateMachine.chooserViewBackgroundColor;
-}
-
-- (void)setChooserViewBackgroundColor:(UIColor *)chooserViewBackgroundColor {
-    self.creationStateMachine.chooserViewBackgroundColor = chooserViewBackgroundColor;
-}
 
 - (UIEdgeInsets)chooserViewEdgeInsets {
     return self.creationStateMachine.chooserViewEdgeInsets;

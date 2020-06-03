@@ -37,8 +37,8 @@
 }
 
 - (void)setupFakeData {
-    self.fakeData = @[[MentionEntity entityWithName:@"Alan Perlis" entityId:@"1"],
-                      [MentionEntity entityWithName:@"Maurice Wilkes" entityId:@"2"],
+    self.fakeData = @[[MentionEntity entityWithName:@"Alan Perlis🧒🏻" entityId:@"1"],
+                      [MentionEntity entityWithName:@"Maurice🧒🏻 Wilkes" entityId:@"2"],
                       [MentionEntity entityWithName:@"Richard Hamming" entityId:@"3"],
                       [MentionEntity entityWithName:@"Marvin Minsky" entityId:@"4"],
                       [MentionEntity entityWithName:@"James Wilkinson" entityId:@"5"],

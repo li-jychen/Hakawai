@@ -10,7 +10,7 @@
 //  an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 //
 
-#import "_HKWMentionsCreationStateMachine.h"
+#import "HKWMentionsCreationStateMachine.h"
 
 #import "HKWChooserViewProtocol.h"
 #import "_HKWDefaultChooserView.h"
@@ -39,13 +39,6 @@ typedef NS_ENUM(NSInteger, HKWMentionsCreationNetworkState) {
     // The mentions creation system is ready: data has been populated, and the system is waiting for the user to type
     //  a character, select a mention, or perform another action.
     HKWMentionsCreationNetworkStateReady,
-
-    // The mentions creation system is ready, but the rate-limiting timer is still active.
-    HKWMentionsCreationNetworkStateTimerCooldown,
-
-    // The mentions creation system is ready, the rate-limiting timer is still active, and another request needs to be
-    //  made once it expires.
-    HKWMentionsCreationNetworkStatePendingRequestAfterCooldown,
 };
 
 /*!
@@ -60,7 +53,7 @@ typedef NS_ENUM(NSInteger, HKWMentionsCreationResultsState) {
     HKWMentionsCreationResultsStateAwaitingFirstResult,
 
     // The mentions creation system is creating a mention, and there is currently at least one result the user can
-    //  select from.
+    // select from.
     HKWMentionsCreationResultsStateCreatingMentionWithResults,
 
     // The mentions creation system is creating a mention, there are no results for the current query string, and the
@@ -84,13 +77,6 @@ typedef NS_ENUM(NSInteger, HKWMentionsCreationAction) {
 
 @property (nonatomic, weak) id<HKWMentionsCreationStateMachineProtocol> delegate;
 
-@property (nonatomic, strong) NSTimer *cooldownTimer;
-@property (nonatomic, readonly) NSTimeInterval cooldownPeriod;
-
-/// A sequence number used by the state machine to disambiguate data provided by callbacks as valid or expired. The
-/// sequence number monotonically increases.
-@property (nonatomic) NSUInteger sequenceNumber;
-
 @property (nonatomic) HKWMentionsCreationState state;
 @property (nonatomic) HKWMentionsCreationNetworkState networkState;
 @property (nonatomic) HKWMentionsCreationResultsState resultsState;
@@ -98,21 +84,10 @@ typedef NS_ENUM(NSInteger, HKWMentionsCreationAction) {
 
 @property (nonatomic, strong) UIView<HKWChooserViewProtocol> *entityChooserView;
 
-/// An array serving as a backing store for the chooser table view; it contains objects representing mentions entities
-/// that the user can select from.
-@property (nonatomic) NSArray *entityArray;
-
 @property (nonatomic) NSUInteger startingLocation;
 
 /// What the last relevant action the user took within the text view was.
 @property (nonatomic) HKWMentionsCreationAction lastTriggerAction;
-
-/// Whether or not at least one set of results has been returned for the current query string.
-@property (nonatomic) BOOL firstResultReturnedForCurrentQuery;
-
-/// Whether or not the results for the current query string are 'finalized', i.e. attempts to append more results should
-/// be ignored.
-@property (nonatomic) BOOL currentQueryIsComplete;
 
 @property (nonatomic) HKWMentionsSearchType searchType;
 
@@ -130,16 +105,12 @@ typedef NS_ENUM(NSInteger, HKWMentionsCreationAction) {
 
 @implementation HKWMentionsCreationStateMachine
 
-// NOTE: Do not remove these
-@synthesize chooserViewBackgroundColor = _chooserViewBackgroundColor;
-
 #pragma mark - API
 
 + (instancetype)stateMachineWithDelegate:(id<HKWMentionsCreationStateMachineProtocol>)delegate {
     NSAssert(delegate != nil, @"Cannot create state machine with nil delegate.");
     HKWMentionsCreationStateMachine *sm = [[self class] new];
     sm.chooserViewClass = [HKWDefaultChooserView class];
-    sm.sequenceNumber = 0;
     sm.delegate = delegate;
     sm.state = HKWMentionsCreationStateQuiescent;
     sm.chooserViewEdgeInsets = UIEdgeInsetsZero;
@@ -172,14 +143,14 @@ typedef NS_ENUM(NSInteger, HKWMentionsCreationAction) {
     }
     unichar stackC = c;
     NSString *characterString = [NSString stringWithCharacters:&stackC length:1];
-    [self stringInserted:characterString isWhitespace:isWhitespace isNewline:isNewline];
+    [self stringInserted:characterString isNewline:isNewline];
 }
 
 - (void)validStringInserted:(NSString *)string {
-    [self stringInserted:string isWhitespace:NO isNewline:NO];
+    [self stringInserted:string isNewline:NO];
 }
 
-- (void)stringInserted:(NSString *)string isWhitespace:(BOOL)isWhitespace isNewline:(BOOL)isNewline {
+- (void)stringInserted:(NSString *)string isNewline:(BOOL)isNewline {
     NSAssert([string length] > 0, @"String must be nonzero length.");
     __strong __auto_type delegate = self.delegate;
 
@@ -198,45 +169,12 @@ typedef NS_ENUM(NSInteger, HKWMentionsCreationAction) {
             else {
                 [self.stringBuffer appendString:string];
                 // Fire off the request and start the timer
-                self.sequenceNumber += 1;
-                NSUInteger sequenceNumber = self.sequenceNumber;
-                __weak typeof(self) __self = self;
-
-                // Start the cooldown timer and fire off a request
-                [self activateCooldownTimer];
                 [delegate asyncRetrieveEntitiesForKeyString:[self.stringBuffer copy]
                                                  searchType:self.searchType
-                                           controlCharacter:self.explicitSearchControlCharacter
-                                                 completion:^(NSArray *results, BOOL dedupe, BOOL isComplete) {
-                                                     [__self dataReturnedWithResults:results
-                                                                      sequenceNumber:sequenceNumber
-                                                                       triggerAction:(isWhitespace
-                                                                                      ? HKWMentionsCreationActionWhitespaceCharacterInserted
-                                                                                      : HKWMentionsCreationActionNormalCharacterInserted)
-                                                                       dedupeResults:dedupe
-                                                                 dataFetchIsComplete:isComplete];
-                                                 }];
+                                           controlCharacter:self.explicitSearchControlCharacter];
             }
             break;
         }
-        case HKWMentionsCreationNetworkStateTimerCooldown:
-        case HKWMentionsCreationNetworkStatePendingRequestAfterCooldown:
-            self.lastTriggerAction = (isWhitespace
-                                      ? HKWMentionsCreationActionWhitespaceCharacterInserted
-                                      : HKWMentionsCreationActionNormalCharacterInserted);
-            // User is creating a mention, but the cooldown timer is active
-            if (isNewline) {
-                // User ended mention creation by typing a newline
-                self.state = HKWMentionsCreationStateQuiescent;
-                [delegate cancelMentionFromStartingLocation:self.startingLocation];
-            }
-            else {
-                [self.stringBuffer appendString:string];
-                // Move the state to 'pending request'. This will cause another request to be fired as soon as the
-                // timer expires.
-                self.networkState = HKWMentionsCreationNetworkStatePendingRequestAfterCooldown;
-            }
-            break;
     }
 }
 
@@ -338,32 +276,12 @@ typedef NS_ENUM(NSInteger, HKWMentionsCreationAction) {
             // The user hasn't completely backed out of mentions creation, so we can continue firing requests.
             // Remove a character from the buffer and immediately fire a request
             [self.stringBuffer deleteCharactersInRange:toDeleteRange];
-            // Fire off the request and start the timer
-            self.sequenceNumber += 1;
-            NSUInteger sequenceNumber = self.sequenceNumber;
-            __weak typeof(self) __self = self;
-
             // Start the cooldown timer and fire off a request
-            [self activateCooldownTimer];
             [delegate asyncRetrieveEntitiesForKeyString:[self.stringBuffer copy]
                                              searchType:self.searchType
-                                       controlCharacter:self.explicitSearchControlCharacter
-                                             completion:^(NSArray *results, BOOL dedupe, BOOL isComplete) {
-                                                 [__self dataReturnedWithResults:results
-                                                                  sequenceNumber:sequenceNumber
-                                                                   triggerAction:HKWMentionsCreationActionCharacterDeleted
-                                                                   dedupeResults:dedupe
-                                                             dataFetchIsComplete:isComplete];
-                                             }];
+                                       controlCharacter:self.explicitSearchControlCharacter];
             break;
         }
-        case HKWMentionsCreationNetworkStatePendingRequestAfterCooldown:
-        case HKWMentionsCreationNetworkStateTimerCooldown:
-            self.lastTriggerAction = HKWMentionsCreationActionCharacterDeleted;
-            // Remove a character from the buffer and queue a request
-            [self.stringBuffer deleteCharactersInRange:toDeleteRange];
-            self.networkState = HKWMentionsCreationNetworkStatePendingRequestAfterCooldown;
-            break;
     }
 }
 
@@ -374,8 +292,6 @@ typedef NS_ENUM(NSInteger, HKWMentionsCreationAction) {
             // User not creating a mention right now.
             return;
         case HKWMentionsCreationNetworkStateReady:
-        case HKWMentionsCreationNetworkStateTimerCooldown:
-        case HKWMentionsCreationNetworkStatePendingRequestAfterCooldown:
             // If the user moves their cursor, mentions creation automatically ends.
             self.state = HKWMentionsCreationStateQuiescent;
             [self.delegate cancelMentionFromStartingLocation:self.startingLocation];
@@ -400,27 +316,14 @@ typedef NS_ENUM(NSInteger, HKWMentionsCreationAction) {
     NSAssert(location != NSNotFound, @"Cannot start mentions creation with NSNotFound as starting location.");
     self.startingLocation = location;
 
-    // Fire off the request and start the timer
-    self.sequenceNumber += 1;
-    NSUInteger sequenceNumber = self.sequenceNumber;
-    __weak typeof(self) __self = self;
-
     // Prepare state
     self.resultsState = HKWMentionsCreationResultsStateAwaitingFirstResult;
 
     // Start the timer and fire off a request
     self.networkState = HKWMentionsCreationNetworkStateReady;
-    [self activateCooldownTimer];
-    [self.delegate asyncRetrieveEntitiesForKeyString:prefix
-                                          searchType:self.searchType
-                                    controlCharacter:self.explicitSearchControlCharacter
-                                          completion:^(NSArray *results, BOOL dedupe, BOOL isComplete) {
-                                              [__self dataReturnedWithResults:results
-                                                               sequenceNumber:sequenceNumber
-                                                                triggerAction:HKWMentionsCreationActionNone
-                                                                dedupeResults:dedupe
-                                                          dataFetchIsComplete:isComplete];
-                                          }];
+    [self.delegate asyncRetrieveEntitiesForKeyString:[self.stringBuffer copy]
+                                     searchType:self.searchType
+                               controlCharacter:self.explicitSearchControlCharacter];
 }
 
 - (void)cancelMentionCreation {
@@ -434,7 +337,6 @@ typedef NS_ENUM(NSInteger, HKWMentionsCreationAction) {
 - (void)resetChooserView {
     self.state = HKWMentionsCreationStateQuiescent;
     self.entityChooserView = nil;
-    self.entityArray = nil;
 }
 
 - (void)hideChooserArrow {
@@ -452,20 +354,9 @@ typedef NS_ENUM(NSInteger, HKWMentionsCreationAction) {
 
 - (void)fetchInitialMentions {
     self.searchType = HKWMentionsSearchTypeInitial;
-    self.sequenceNumber += 1;
-    NSUInteger sequenceNumber = self.sequenceNumber;
-    __weak typeof(self) weakSelf = self;
-
-    [self.delegate asyncRetrieveEntitiesForKeyString:@""
-                                          searchType:self.searchType
-                                    controlCharacter:0
-                                          completion:^(NSArray *results, BOOL dedupe, BOOL isComplete) {
-                                              [weakSelf dataReturnedWithResults:results
-                                                                 sequenceNumber:sequenceNumber
-                                                                  triggerAction:HKWMentionsCreationActionNone
-                                                                  dedupeResults:dedupe
-                                                            dataFetchIsComplete:isComplete];
-                                          }];
+    [self.delegate asyncRetrieveEntitiesForKeyString:[self.stringBuffer copy]
+                                     searchType:self.searchType
+                               controlCharacter:self.explicitSearchControlCharacter];
 }
 
 #pragma mark - Chooser View Frame
@@ -563,6 +454,23 @@ typedef NS_ENUM(NSInteger, HKWMentionsCreationAction) {
     }
 }
 
+- (void)handleSelectionForEntity:(id<HKWMentionsEntityProtocol>)entity indexPath:(NSIndexPath *)indexPath {
+    HKWMentionsAttribute *mention = [HKWMentionsAttribute mentionWithText:[entity entityName]
+                                                               identifier:[entity entityId]];
+    mention.metadata = [entity entityMetadata];
+    self.state = HKWMentionsCreationStateQuiescent;
+    __strong __auto_type delegate = self.delegate;
+
+    if (HKWTextView.enableMentionSelectFix) {
+        // Delegate selected callback should fire prior to creationMention which triggers textView callbacks
+        [delegate selected:entity atIndexPath:indexPath];
+        [delegate createMention:mention startingLocation:self.startingLocation];
+    } else {
+        [delegate createMention:mention startingLocation:self.startingLocation];
+        [delegate selected:entity atIndexPath:indexPath];
+    }
+}
+
 - (void)hideChooserView {
     __strong __auto_type delegate = self.delegate;
     [delegate accessoryViewStateWillChange:NO];
@@ -609,162 +517,7 @@ typedef NS_ENUM(NSInteger, HKWMentionsCreationAction) {
     return chooserView;
 }
 
-
-#pragma mark - Private (timer related)
-
-/*!
- Configure and activate the cooldown timer. If the cooldown timer was already active, restarts it.
- */
-- (void)activateCooldownTimer {
-    // Remove any pre-existing timers.
-    [self.cooldownTimer invalidate];
-
-    // Advance state
-    switch (self.networkState) {
-        case HKWMentionsCreationNetworkStateQuiescent:
-            NSAssert(NO, @"Timer should never be activated when state machine is quiescent.");
-            break;
-        case HKWMentionsCreationNetworkStateReady:
-            self.networkState = HKWMentionsCreationNetworkStateTimerCooldown;
-            break;
-        case HKWMentionsCreationNetworkStateTimerCooldown:
-            NSAssert(NO, @"Timer should never be activated when state machine is waiting for timer cooldown.");
-            break;
-        case HKWMentionsCreationNetworkStatePendingRequestAfterCooldown:
-            // Valid state transition. This happens if a new request is fired as soon as the timer times out.
-            self.networkState = HKWMentionsCreationNetworkStateTimerCooldown;
-            break;
-    }
-
-    // Add and activate the timer
-    NSTimer *timer = [NSTimer timerWithTimeInterval:self.cooldownPeriod
-                                             target:self
-                                           selector:@selector(cooldownTimerFired:)
-                                           userInfo:nil
-                                            repeats:NO];
-    self.cooldownTimer = timer;
-    [[NSRunLoop mainRunLoop] addTimer:timer forMode:NSDefaultRunLoopMode];
-}
-
-/*!
- Handle actions and state transitions after the cooldown timer fires. If the user has queued up another request, this
- method may fire another typeahead request to the server immediately. Otherwise, the firing of the timer indicates that
- it is acceptable to send another request at any time.
- */
-- (void)cooldownTimerFired:(__unused NSTimer *)timer {
-    switch (self.networkState) {
-        case HKWMentionsCreationNetworkStateQuiescent:
-            // User not creating a mention right now.
-            return;
-        case HKWMentionsCreationNetworkStateReady:
-            NSAssert(NO, @"Timer should never be active when state machine is in the 'ready' state.");
-            return;
-        case HKWMentionsCreationNetworkStateTimerCooldown:
-            self.networkState = HKWMentionsCreationNetworkStateReady;
-            break;
-        case HKWMentionsCreationNetworkStatePendingRequestAfterCooldown:
-            // Fire off another request immediately
-            self.sequenceNumber += 1;
-            NSUInteger sequenceNumber = self.sequenceNumber;
-            __weak typeof(self) __self = self;
-
-            [self activateCooldownTimer];
-            [self.delegate asyncRetrieveEntitiesForKeyString:[self.stringBuffer copy]
-                                                  searchType:self.searchType
-                                            controlCharacter:self.explicitSearchControlCharacter
-                                                  completion:^(NSArray *results, BOOL dedupe, BOOL isComplete) {
-                                                      [__self dataReturnedWithResults:results
-                                                                       sequenceNumber:sequenceNumber
-                                                                        triggerAction:self.lastTriggerAction
-                                                                        dedupeResults:dedupe
-                                                                  dataFetchIsComplete:isComplete];
-                                                  }];
-            break;
-    }
-}
-
-
 #pragma mark - Private (data related)
-
-/*!
- Handle updated data received from the data source.
- */
-- (void)dataReturnedWithResults:(NSArray *)results
-                 sequenceNumber:(NSUInteger)sequence
-                  triggerAction:(HKWMentionsCreationAction)action
-                  dedupeResults:(BOOL)dedupe
-            dataFetchIsComplete:(BOOL)isComplete {
-    // Check for error conditions
-    if (sequence != self.sequenceNumber) {
-        // This is a response to an out-of-date request.
-        HKWLOG(@"  DEBUG: out-of-date request (seq: %lu, current: %lu)",
-               (unsigned long)sequence, (unsigned long)self.sequenceNumber);
-        return;
-    }
-    if (self.state == HKWMentionsCreationStateQuiescent && self.searchType != HKWMentionsSearchTypeInitial) {
-        NSAssert(self.chooserState == HKWMentionsCreationChooserStateHidden,
-                 @"Logic error: entity chooser view is active even though state machine is quiescent.");
-        self.entityArray = nil;
-        return;
-    }
-
-    // At this point, check whether or not we've received at least one set of results for the current query.
-    if (self.firstResultReturnedForCurrentQuery) {
-        if (self.currentQueryIsComplete) {
-            HKWLOG(@"Delegate tried to append data, but the current query is already complete. Ignoring.");
-        }
-        else {
-            // Append additional data and update the state.
-            self.currentQueryIsComplete = isComplete;
-            [self appendAdditionalResults:results dedupeResults:dedupe previousAction:action];
-        }
-        return;
-    }
-
-    // At this point, we are handling the *first* response for a given query.
-    self.firstResultReturnedForCurrentQuery = YES;
-    self.currentQueryIsComplete = isComplete || [results count] == 0;
-    if ([results count] == 0) {
-        // No responses
-        self.entityArray = nil;
-        [self handleFinalizedQueryWithNoResultsWithWhiteSpace:action == HKWMentionsCreationActionWhitespaceCharacterInserted];
-        return;
-    }
-
-    // We have at least one response
-    self.resultsState = HKWMentionsCreationResultsStateCreatingMentionWithResults;
-
-    NSUInteger numResults = [results count];
-    NSMutableArray *validResults = [NSMutableArray arrayWithCapacity:numResults];
-    NSMutableSet *uniqueIds = [NSMutableSet setWithCapacity:numResults];
-    for (id entity in results) {
-#ifdef DEBUG
-        // Validate
-        NSAssert([entity conformsToProtocol:@protocol(HKWMentionsEntityProtocol)],
-                 @"Data results array contained at least one object that didn't conform to the protocol. This is a \
-                 serious error. Object: %@",
-                 entity);
-#endif
-        if (dedupe) {
-            // This is the first response; protect against duplicates within this response
-            NSString *uniqueId = [self uniqueIdForEntity:entity];
-            if ([uniqueId length] && ![uniqueIds containsObject:uniqueId]) {
-                [validResults addObject:entity];
-                [uniqueIds addObject:uniqueId];
-            }
-        }
-        else {
-            [validResults addObject:entity];
-        }
-    }
-    self.entityArray = [validResults copy];
-
-    // If mentions creation is still active or if its for initial search, and we haven't shown the chooser view, show it now.
-    if ((self.state != HKWMentionsCreationStateQuiescent || self.searchType == HKWMentionsSearchTypeInitial)
-        && self.chooserState == HKWMentionsCreationChooserStateHidden) {
-        [self showChooserView];
-    }
-}
 
 /*!
  Handle updated data received from the data source.
@@ -774,95 +527,18 @@ typedef NS_ENUM(NSInteger, HKWMentionsCreationAction) {
     if (self.state == HKWMentionsCreationStateQuiescent && self.searchType != HKWMentionsSearchTypeInitial) {
         NSAssert(self.chooserState == HKWMentionsCreationChooserStateHidden,
                  @"Logic error: entity chooser view is active even though state machine is quiescent.");
-        self.entityArray = nil;
         return;
     }
-    // At this point, we are handling the *first* response for a given query.
-    self.firstResultReturnedForCurrentQuery = YES;
-    self.currentQueryIsComplete = YES;
     if (isEmptyResults) {
-        // No responses
-        self.entityArray = nil;
         [self handleFinalizedQueryWithNoResultsWithWhiteSpace:keystringEndsWithWhiteSpace];
         return;
     }
     // We have at least one response
     self.resultsState = HKWMentionsCreationResultsStateCreatingMentionWithResults;
-    // set entityArray to nil as the callsite is not sending results
-    self.entityArray = nil;
     // If mentions creation is still active or if its for initial search, and we haven't shown the chooser view, show it now.
     if ((self.state != HKWMentionsCreationStateQuiescent || self.searchType == HKWMentionsSearchTypeInitial)
         && self.chooserState == HKWMentionsCreationChooserStateHidden) {
         [self showChooserView];
-    }
-}
-
-- (void)appendAdditionalResults:(NSArray *)results
-                  dedupeResults:(BOOL)dedupe
-                 previousAction:(HKWMentionsCreationAction)previousAction {
-
-    // Append the additional results to the current list of results
-    if ([results count] > 0) {
-        // If results should be deduped, create a set containing uniqueIds for all existing entities.
-        NSMutableSet *uniqueIds = [NSMutableSet setWithCapacity:[self.entityArray count]];
-        if (dedupe) {
-            for (id entity in self.entityArray) {
-                if ([entity conformsToProtocol:@protocol(HKWMentionsEntityProtocol)]) {
-                    NSString *uniqueId = [self uniqueIdForEntity:entity];
-                    if ([uniqueId length]) {
-                        [uniqueIds addObject:uniqueId];
-                    }
-                }
-            }
-        }
-
-        NSMutableArray *resultsBuffer = [NSMutableArray arrayWithArray:self.entityArray ?: @[]];
-        for (id result in results) {
-            if ([result conformsToProtocol:@protocol(HKWMentionsEntityProtocol)]) {
-                // This is a subsequent response; protect against adding duplicates from previous responses
-                if (dedupe) {
-                    NSString *uniqueId = [self uniqueIdForEntity:result];
-                    if ([uniqueId length] && ![uniqueIds containsObject:uniqueId]) {
-                        [resultsBuffer addObject:result];
-                        // Protect against duplicates within the new data set being appended
-                        [uniqueIds addObject:uniqueId];
-                    }
-                }
-                else {
-                    [resultsBuffer addObject:result];
-                }
-            }
-        }
-        self.entityArray = [resultsBuffer copy];
-    }
-    else {
-        // No results
-        [self.entityChooserView reloadData];
-        if ([self.entityArray count] == 0 && self.currentQueryIsComplete) {
-            // We have absolutely no results, and we've finalized the results for this query.
-            [self handleFinalizedQueryWithNoResultsWithWhiteSpace:previousAction == HKWMentionsCreationActionWhitespaceCharacterInserted];
-        }
-        return;
-    }
-
-    // At this point, we have at least one mention
-    self.resultsState = HKWMentionsCreationResultsStateCreatingMentionWithResults;
-
-    // Force the chooser view to update state
-    if (self.chooserState == HKWMentionsCreationChooserStateHidden) {
-        // We hid the chooser view, possibly because we hadn't gotten results previously
-        [self showChooserView];
-    }
-    [self.entityChooserView reloadData];
-}
-
-- (NSString *)uniqueIdForEntity:(id<HKWMentionsEntityProtocol>)entity {
-    if ([entity respondsToSelector:@selector(uniqueId)]) {
-        return [entity uniqueId];
-    }
-    else {
-        // Default to using the entityId when a uniqueId is not provided
-        return [entity entityId];
     }
 }
 
@@ -899,125 +575,7 @@ typedef NS_ENUM(NSInteger, HKWMentionsCreationAction) {
     self.resultsState = HKWMentionsCreationResultsStateNoResultsWithoutWhitespace;
 }
 
-
-#pragma mark - Custom chooser view
-
-- (BOOL)shouldDisplayLoadingIndicator {
-    return !self.currentQueryIsComplete;
-}
-
-- (NSUInteger)numberOfModelObjects {
-    return [self.entityArray count];
-}
-
-- (id)modelObjectForIndex:(NSUInteger)index {
-    return self.entityArray[index];
-}
-
-- (void)modelObjectSelectedAtIndex:(NSUInteger)index {
-    id<HKWMentionsEntityProtocol> entity = self.entityArray[index];
-    HKWMentionsAttribute *mention = [HKWMentionsAttribute mentionWithText:[entity entityName]
-                                                               identifier:[entity entityId]];
-    mention.metadata = [entity entityMetadata];
-    self.state = HKWMentionsCreationStateQuiescent;
-    [self.delegate createMention:mention startingLocation:self.startingLocation];
-}
-
-
-#pragma mark - Table view
-// Note: the table view data source and delegate here service the table view embedded within the state machine's
-//  entity chooser view.
-
-- (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)indexPath {
-    NSAssert(indexPath.section == 0 || indexPath.section == 1,
-             @"Entity chooser table view can only have up to 2 sections. Method was called for section %ld.",
-             (long)indexPath.section);
-    __strong __auto_type delegate = self.delegate;
-    if (indexPath.section == 1) {
-        // Loading cell
-        NSAssert(delegate.loadingCellSupported,
-                 @"Table view has 2 sections but the delegate doesn't support a loading cell. This is an error.");
-        UITableViewCell *cell = [delegate loadingCellForTableView:tableView];
-        cell.userInteractionEnabled = NO;
-        return cell;
-    }
-    NSAssert(indexPath.row >= 0 && (NSUInteger)indexPath.row < [self.entityArray count],
-             @"Entity chooser table view requested a cell with an out-of-bounds index path row.");
-    id<HKWMentionsEntityProtocol> entity = self.entityArray[(NSUInteger)indexPath.row];
-    return [delegate cellForMentionsEntity:entity withMatchString:[self.stringBuffer copy] tableView:tableView atIndexPath:indexPath];
-}
-
-- (NSInteger)numberOfSectionsInTableView:(__unused UITableView *)tableView {
-    return (self.delegate.loadingCellSupported && !self.currentQueryIsComplete) ? 2 : 1;
-}
-
-- (NSInteger)tableView:(__unused UITableView *)tableView numberOfRowsInSection:(NSInteger)section {
-    NSAssert(section == 0 || section == 1,
-             @"Entity chooser table view can only have up to 2 sections.");
-    if (section == 1) {
-        // Loading cell
-        return 1;
-    }
-    return (NSInteger)[self.entityArray count];
-}
-
-- (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath {
-    NSAssert(indexPath.section == 0 || indexPath.section == 1,
-             @"Entity chooser table view can only have up to 2 sections.");
-    __strong __auto_type delegate = self.delegate;
-    if (indexPath.section == 1) {
-        // Loading cell
-        return [delegate heightForLoadingCellInTableView:tableView];
-    }
-    NSAssert(indexPath.row >= 0 && (NSUInteger)indexPath.row < [self.entityArray count],
-             @"Entity chooser table view requested a cell with an out-of-bounds index path row.");
-    id<HKWMentionsEntityProtocol> entity = self.entityArray[(NSUInteger)indexPath.row];
-    return [delegate heightForCellForMentionsEntity:entity tableView:tableView];
-}
-
-- (void)tableView:(UITableView *)tableView didSelectRowAtIndexPath:(NSIndexPath *)indexPath {
-    [tableView deselectRowAtIndexPath:indexPath animated:YES];
-    if (indexPath.section == 1) {
-        return;
-    }
-    // Create the mention
-    id<HKWMentionsEntityProtocol> entity = self.entityArray[(NSUInteger)indexPath.row];
-    [self handleSelectionForEntity:entity indexPath:indexPath];
-}
-
-- (void)handleSelectionForEntity:(id<HKWMentionsEntityProtocol>)entity indexPath:(NSIndexPath *)indexPath {
-    HKWMentionsAttribute *mention = [HKWMentionsAttribute mentionWithText:[entity entityName]
-                                                               identifier:[entity entityId]];
-    mention.metadata = [entity entityMetadata];
-    self.state = HKWMentionsCreationStateQuiescent;
-    __strong __auto_type delegate = self.delegate;
-
-    if (HKWTextView.enableMentionSelectFix) {
-        // Delegate selected callback should fire prior to creationMention which triggers textView callbacks
-        [delegate selected:entity atIndexPath:indexPath];
-        [delegate createMention:mention startingLocation:self.startingLocation];
-    } else {
-        [delegate createMention:mention startingLocation:self.startingLocation];
-        [delegate selected:entity atIndexPath:indexPath];
-    }
-}
-
-
 #pragma mark - Properties
-
-- (UIColor *)chooserViewBackgroundColor {
-    if (!_chooserViewBackgroundColor) {
-        _chooserViewBackgroundColor = [UIColor whiteColor];
-    }
-    return _chooserViewBackgroundColor;
-}
-
-- (void)setChooserViewBackgroundColor:(UIColor *)chooserViewBackgroundColor {
-    _chooserViewBackgroundColor = chooserViewBackgroundColor;
-    if (_entityChooserView && [_entityChooserView respondsToSelector:@selector(setChooserBackgroundColor:)]) {
-        [_entityChooserView setChooserBackgroundColor:chooserViewBackgroundColor];
-    }
-}
 
 - (void)setChooserViewEdgeInsets:(UIEdgeInsets)chooserViewEdgeInsets {
     HKWMentionsChooserPositionMode mode = [self.delegate chooserPositionMode];
@@ -1045,12 +603,6 @@ typedef NS_ENUM(NSInteger, HKWMentionsCreationAction) {
     }
 }
 
-- (void)setSequenceNumber:(NSUInteger)sequenceNumber {
-    self.currentQueryIsComplete = NO;
-    self.firstResultReturnedForCurrentQuery = NO;
-    _sequenceNumber = sequenceNumber;
-}
-
 - (void)setState:(HKWMentionsCreationState)state {
     if (_state == state) {
         return;
@@ -1074,10 +626,6 @@ typedef NS_ENUM(NSInteger, HKWMentionsCreationAction) {
     HKW_STATE_LOG(@"  Creation SM Network State Transition: %@ --> %@",
                   nameForNetworkState(_networkState), nameForNetworkState(networkState));
     _networkState = networkState;
-    if (_networkState == HKWMentionsCreationNetworkStateQuiescent) {
-        // Reset the cooldown timer
-        [self.cooldownTimer invalidate];
-    }
 }
 
 - (void)setResultsState:(HKWMentionsCreationResultsState)resultsState {
@@ -1099,21 +647,9 @@ typedef NS_ENUM(NSInteger, HKWMentionsCreationAction) {
     }
 }
 
-- (void)setEntityArray:(NSArray *)entityArray {
-    if (!_entityArray && !entityArray) {
-        return;
-    }
-    _entityArray = entityArray;
-    // Force the entity chooser's table view to update
-    [self.entityChooserView reloadData];
-}
-
 - (UIView<HKWChooserViewProtocol> *)entityChooserView {
     if (!_entityChooserView) {
         _entityChooserView = [self createNewChooserView];
-        if ([_entityChooserView respondsToSelector:@selector(setChooserBackgroundColor:)]) {
-            [_entityChooserView setChooserBackgroundColor:self.chooserViewBackgroundColor];
-        }
     }
     return _entityChooserView;
 }
@@ -1123,10 +659,6 @@ typedef NS_ENUM(NSInteger, HKWMentionsCreationAction) {
         _stringBuffer = [NSMutableString string];
     }
     return _stringBuffer;
-}
-
-- (NSTimeInterval)cooldownPeriod {
-    return 0.1;
 }
 
 - (BOOL)chooserViewInsideTextView {
@@ -1174,10 +706,6 @@ NSString *nameForNetworkState(HKWMentionsCreationNetworkState s) {
             return @"Quiescent";
         case HKWMentionsCreationNetworkStateReady:
             return @"Ready";
-        case HKWMentionsCreationNetworkStateTimerCooldown:
-            return @"TimerCooldown";
-        case HKWMentionsCreationNetworkStatePendingRequestAfterCooldown:
-            return @"PendingRequestAfterCooldown";
     }
 }
 
