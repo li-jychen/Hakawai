@@ -107,9 +107,6 @@ typedef NS_ENUM(NSInteger, HKWMentionsCreationAction) {
 /// What the last relevant action the user took within the text view was.
 @property (nonatomic) HKWMentionsCreationAction lastTriggerAction;
 
-/// Whether or not at least one set of results has been returned for the current query string.
-@property (nonatomic) BOOL firstResultReturnedForCurrentQuery;
-
 /// Whether or not the results for the current query string are 'finalized', i.e. attempts to append more results should
 /// be ignored.
 @property (nonatomic) BOOL currentQueryIsComplete;
@@ -708,22 +705,7 @@ typedef NS_ENUM(NSInteger, HKWMentionsCreationAction) {
         self.entityArray = nil;
         return;
     }
-
-    // At this point, check whether or not we've received at least one set of results for the current query.
-    if (self.firstResultReturnedForCurrentQuery) {
-        if (self.currentQueryIsComplete) {
-            HKWLOG(@"Delegate tried to append data, but the current query is already complete. Ignoring.");
-        }
-        else {
-            // Append additional data and update the state.
-            self.currentQueryIsComplete = isComplete;
-            [self appendAdditionalResults:results dedupeResults:dedupe previousAction:action];
-        }
-        return;
-    }
-
     // At this point, we are handling the *first* response for a given query.
-    self.firstResultReturnedForCurrentQuery = YES;
     self.currentQueryIsComplete = isComplete || [results count] == 0;
     if ([results count] == 0) {
         // No responses
@@ -778,8 +760,6 @@ typedef NS_ENUM(NSInteger, HKWMentionsCreationAction) {
         self.entityArray = nil;
         return;
     }
-    // At this point, we are handling the *first* response for a given query.
-    self.firstResultReturnedForCurrentQuery = YES;
     self.currentQueryIsComplete = YES;
     if (isEmptyResults) {
         // No responses
@@ -796,65 +776,6 @@ typedef NS_ENUM(NSInteger, HKWMentionsCreationAction) {
         && self.chooserState == HKWMentionsCreationChooserStateHidden) {
         [self showChooserView];
     }
-}
-
-- (void)appendAdditionalResults:(NSArray *)results
-                  dedupeResults:(BOOL)dedupe
-                 previousAction:(HKWMentionsCreationAction)previousAction {
-
-    // Append the additional results to the current list of results
-    if ([results count] > 0) {
-        // If results should be deduped, create a set containing uniqueIds for all existing entities.
-        NSMutableSet *uniqueIds = [NSMutableSet setWithCapacity:[self.entityArray count]];
-        if (dedupe) {
-            for (id entity in self.entityArray) {
-                if ([entity conformsToProtocol:@protocol(HKWMentionsEntityProtocol)]) {
-                    NSString *uniqueId = [self uniqueIdForEntity:entity];
-                    if ([uniqueId length]) {
-                        [uniqueIds addObject:uniqueId];
-                    }
-                }
-            }
-        }
-
-        NSMutableArray *resultsBuffer = [NSMutableArray arrayWithArray:self.entityArray ?: @[]];
-        for (id result in results) {
-            if ([result conformsToProtocol:@protocol(HKWMentionsEntityProtocol)]) {
-                // This is a subsequent response; protect against adding duplicates from previous responses
-                if (dedupe) {
-                    NSString *uniqueId = [self uniqueIdForEntity:result];
-                    if ([uniqueId length] && ![uniqueIds containsObject:uniqueId]) {
-                        [resultsBuffer addObject:result];
-                        // Protect against duplicates within the new data set being appended
-                        [uniqueIds addObject:uniqueId];
-                    }
-                }
-                else {
-                    [resultsBuffer addObject:result];
-                }
-            }
-        }
-        self.entityArray = [resultsBuffer copy];
-    }
-    else {
-        // No results
-        [self.entityChooserView reloadData];
-        if ([self.entityArray count] == 0 && self.currentQueryIsComplete) {
-            // We have absolutely no results, and we've finalized the results for this query.
-            [self handleFinalizedQueryWithNoResultsWithWhiteSpace:previousAction == HKWMentionsCreationActionWhitespaceCharacterInserted];
-        }
-        return;
-    }
-
-    // At this point, we have at least one mention
-    self.resultsState = HKWMentionsCreationResultsStateCreatingMentionWithResults;
-
-    // Force the chooser view to update state
-    if (self.chooserState == HKWMentionsCreationChooserStateHidden) {
-        // We hid the chooser view, possibly because we hadn't gotten results previously
-        [self showChooserView];
-    }
-    [self.entityChooserView reloadData];
 }
 
 - (NSString *)uniqueIdForEntity:(id<HKWMentionsEntityProtocol>)entity {
@@ -1048,7 +969,6 @@ typedef NS_ENUM(NSInteger, HKWMentionsCreationAction) {
 
 - (void)setSequenceNumber:(NSUInteger)sequenceNumber {
     self.currentQueryIsComplete = NO;
-    self.firstResultReturnedForCurrentQuery = NO;
     _sequenceNumber = sequenceNumber;
 }
 
